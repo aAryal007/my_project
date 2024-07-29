@@ -1,0 +1,79 @@
+import aiohttp
+import asyncio
+import logging
+import pandas as pd
+from sqlalchemy import create_engine, text
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# API Configuration
+FLIPSIDE_API_URL = "https://api.flipsidecrypto.com/api/v2/queries"
+FLIPSIDE_API_KEY = "your_api_key"  # Replace with your actual Flipside Crypto API key
+
+# Database Configuration
+DB_CONNECTION_STRING = "postgresql+psycopg2://username:password@localhost:5432/database_name"
+
+# Async function to fetch data from the Flipside Crypto API
+async def fetch_data(session, query_id):
+    headers = {
+        'Accept': 'application/json',
+        'x-api-key': FLIPSIDE_API_KEY
+    }
+    url = f"{FLIPSIDE_API_URL}/{query_id}/data/latest"
+    try:
+        async with session.get(url, headers=headers) as response:
+            response.raise_for_status()
+            return await response.json()
+    except aiohttp.ClientError as e:
+        logger.error(f"HTTP error occurred: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        return None
+
+# Process the fetched data
+def process_data(data):
+    logger.info("Processing data")
+    df = pd.DataFrame(data)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.dropna()
+    return df
+
+# Load data into PostgreSQL
+def load_data_to_db(df, table_name):
+    logger.info("Loading data into database")
+    try:
+        engine = create_engine(DB_CONNECTION_STRING)
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        # Creating an index on the table for optimized query performance
+        with engine.connect() as conn:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_id ON {table_name} (id)"))
+        logger.info("Data loaded successfully")
+    except Exception as e:
+        logger.error(f"An error occurred while loading data to the database: {e}")
+
+# Main function
+async def main():
+    query_id = "your_query_id"  # Replace with your actual query ID
+    async with aiohttp.ClientSession() as session:
+        data = await fetch_data(session, query_id)
+        if data:
+            processed_data = process_data(data)
+            load_data_to_db(processed_data, 'solana_core_fact_transfers')
+        else:
+            logger.error("Failed to fetch data")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+unit test 
+
+import unittest
+import pandas as pd
+from unittest.mock import patch, MagicMock
+import asyncio
+import aiohttp
+from sqlalchemy import text
